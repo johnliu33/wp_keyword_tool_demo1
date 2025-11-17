@@ -1,0 +1,183 @@
+// Prisma Schema for WP Keyword AI Tool
+// 連接 Supabase PostgreSQL
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================================
+// Supabase Auth Users Table
+// 注意：此表由 Supabase Auth 管理，不要直接修改 schema
+// ============================================
+
+model User {
+  id        String   @id @db.Uuid
+  email     String?  @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // 自訂欄位
+  name String?
+
+  // Relations
+  sites    Site[]
+  projects Project[]
+  articles Article[]
+
+  @@map("users")
+}
+
+// ============================================
+// WordPress 網站管理
+// ============================================
+
+model Site {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name     String // 網站名稱（例如：我的部落格）
+  url      String // WordPress 網站 URL（例如：https://example.com）
+  authType String @default("app_password") @map("auth_type") // 認證方式：app_password | jwt
+
+  // WordPress 認證資訊（加密儲存）
+  username    String // WordPress 使用者名稱
+  passwordEnc String @map("password_enc") // 加密後的密碼
+
+  // Relations
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  articles Article[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("sites")
+}
+
+// ============================================
+// 關鍵字研究專案
+// ============================================
+
+model Project {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String // 專案名稱
+  coreKeywords String[] @map("core_keywords") // 核心關鍵字陣列
+
+  // 設定
+  language String @default("zh-TW") // 語言代碼
+  country  String @default("TW") // 國家代碼
+
+  // Relations
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  keywords Keyword[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("projects")
+}
+
+// ============================================
+// 關鍵字（長尾字）
+// ============================================
+
+model Keyword {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  keyword String // 關鍵字文字
+
+  // AI 分析結果
+  intent         String // 搜尋意圖：informational | transactional | navigational
+  purchaseScore  Float  @default(0) @map("purchase_score") // 購買意圖分數 (0-1)
+  relevanceScore Float  @default(0) @map("relevance_score") // 與核心字的相關性 (0-1)
+
+  // 分群與分類（V2 功能）
+  group       String? // 分群：High Purchase | Commercial | Informational
+  contentType String? @map("content_type") // 內容類型：比較文 | 教學 | 評測 | 列表文
+
+  // 搜尋量（預估或 API 取得）
+  suggestedVolume String? @map("suggested_volume") // 例如："1K-10K"
+
+  // Relations
+  projectId String  @map("project_id") @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  longtails Longtail[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([projectId])
+  @@index([intent])
+  @@index([group])
+  @@map("keywords")
+}
+
+// ============================================
+// 長尾關鍵字（子關鍵字）
+// ============================================
+
+model Longtail {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  keyword String // 長尾關鍵字文字
+
+  // Relations
+  parentId String  @map("parent_id") @db.Uuid
+  parent   Keyword @relation(fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@index([parentId])
+  @@map("longtails")
+}
+
+// ============================================
+// 文章（生成的內容）
+// ============================================
+
+model Article {
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title           String // 文章標題
+  content         String  @db.Text // 文章內容（Markdown 格式）
+  slug            String // URL slug
+  metaDescription String? @map("meta_description") // Meta 描述
+
+  // 生成參數
+  titleType String? @map("title_type") // 標題類型：short | seo | clickbait
+  tone      String  @default("professional") // 語氣：formal | friendly | professional | casual
+  style     String  @default("guide") // 風格：listicle | howto | comparison | review | guide
+  wordCount Int     @default(1500) @map("word_count") // 字數
+
+  // 發佈狀態
+  status      String    @default("draft") // 狀態：draft | scheduled | published | failed
+  scheduledAt DateTime? @map("scheduled_at") // 排程發佈時間
+  publishedAt DateTime? @map("published_at") // 實際發佈時間
+
+  // WordPress 資訊
+  wpPostId  Int?    @map("wp_post_id") // WordPress 文章 ID
+  wpPostUrl String? @map("wp_post_url") // WordPress 文章 URL
+
+  // 錯誤處理
+  error      String? // 錯誤訊息
+  retryCount Int     @default(0) @map("retry_count") // 重試次數
+
+  // Relations
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  siteId String? @map("site_id") @db.Uuid
+  site   Site?   @relation(fields: [siteId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([siteId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@map("articles")
+}
